@@ -21,7 +21,6 @@ import java.util.Map;
 
 import org.eclipse.core.expressions.Expression;
 import org.eclipse.core.runtime.IProgressMonitor;
-import org.eclipse.core.runtime.jobs.Job;
 import org.eclipse.emf.common.util.URI;
 import org.eclipse.emf.compare.diff.metamodel.DiffModel;
 import org.eclipse.emf.compare.diff.service.DiffService;
@@ -36,8 +35,6 @@ import org.eclipse.jface.action.Action;
 import org.eclipse.jface.commands.ActionHandler;
 import org.eclipse.jface.text.IDocument;
 import org.eclipse.jface.text.ISynchronizable;
-import org.eclipse.jface.text.ITextListener;
-import org.eclipse.jface.text.TextEvent;
 import org.eclipse.jface.text.source.AnnotationModel;
 import org.eclipse.jface.text.source.ISourceViewer;
 import org.eclipse.jface.text.source.SourceViewer;
@@ -59,6 +56,7 @@ import org.eclipse.ui.texteditor.DefaultMarkerAnnotationAccess;
 import org.eclipse.ui.texteditor.ITextEditorActionDefinitionIds;
 import org.eclipse.ui.texteditor.MarkerAnnotationPreferences;
 import org.eclipse.ui.texteditor.SourceViewerDecorationSupport;
+import org.eclipse.xtext.Constants;
 import org.eclipse.xtext.IGrammarAccess;
 import org.eclipse.xtext.resource.XtextResource;
 import org.eclipse.xtext.ui.editor.XtextSourceViewer;
@@ -78,8 +76,10 @@ import org.eclipse.xtext.validation.Issue;
 
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.Iterators;
+import com.google.inject.Inject;
 import com.google.inject.Injector;
 import com.google.inject.Provider;
+import com.google.inject.name.Named;
 
 public class EmbeddedXtextEditor {
 
@@ -91,26 +91,38 @@ public class EmbeddedXtextEditor {
 	private XtextSourceViewer fSourceViewer;
 	private XtextResource fResource;
 	private XtextDocument fDocument;
-	private String fFileExtension;
 	
+	@Inject
+	@Named(Constants.FILE_EXTENSIONS)
+	private String fFileExtension;
+
 	private XtextSourceViewerConfiguration fViewerConfiguration;
 	
-	private final Job fReconcilerJob;
+	@Inject
+	private HighlightingHelper fHighlightingHelper;
 	
-	private final HighlightingHelper fHighlightingHelper;
-	
+	@Inject
 	private IResourceSetProvider fResourceSetProvider;
+
+	@Inject
 	private IGrammarAccess fGrammarAccess;
 	
-	private final Injector fInjector;
-	
+	@Inject
 	private XtextSourceViewer.Factory fSourceViewerFactory;
+
+	@Inject
 	private Provider<XtextSourceViewerConfiguration> fSourceViewerConfigurationProvider;
+
+	@Inject
 	private Provider<XtextDocument> fDocumentProvider;
+
+	@Inject
 	private IResourceValidator fResourceValidator;
+
+	@Inject
 	private IPreferenceStoreAccess fPreferenceStoreAccess;
-	
-	private ITextListener fTextListener;
+
+//	private ITextListener fTextListener;
 	private boolean fDeselectOnNextUpdate;
 	
 	private ActionHandler contentAssistAction = new ActionHandler(new Action() {
@@ -127,24 +139,14 @@ public class EmbeddedXtextEditor {
 	 * @param job the synchronization job that will be scheduled/rescheduled at each 
 	 * 		modification of the editor text. It may be use to reconcile the content of 
 	 * 		the editor with something else. 
-	 * @param fileExtension the file extension (without the DOT) of the textual DSL to edit
 	 * @param style the SWT style of the {@link SourceViewer} of this editor.
+	 * @param fileExtension the file extension (without the DOT) of the textual DSL to edit
 	 */
-	public EmbeddedXtextEditor(Composite control, Injector injector, Job job, String fileExtension, int style) {
+	public EmbeddedXtextEditor(Composite control, Injector injector, int style) {
 		fControl = control;
-		fInjector = injector;
-		fReconcilerJob = job;
 		fStyle = style;
 
-		fSourceViewerFactory = injector.getInstance(XtextSourceViewer.Factory.class);
-		fSourceViewerConfigurationProvider = injector.getProvider(XtextSourceViewerConfiguration.class);
-		fDocumentProvider = injector.getProvider(XtextDocument.class);
-		fResourceValidator = injector.getInstance(IResourceValidator.class);
-		fPreferenceStoreAccess = injector.getInstance(IPreferenceStoreAccess.class);
-		fResourceSetProvider = injector.getInstance(IResourceSetProvider.class);
-		fGrammarAccess = injector.getInstance(IGrammarAccess.class);
-		fFileExtension = fileExtension;
-		fHighlightingHelper = new HighlightingHelper();
+		injector.injectMembers(this);
 		
 		createEditor(fControl);
 	}
@@ -162,8 +164,8 @@ public class EmbeddedXtextEditor {
 	 * @param fileExtension the file extension (without the DOT) of the textual DSL to edit
 	 * @param fileExtension
 	 */
-	public EmbeddedXtextEditor(Composite control, Injector injector, Job job, String fileExtension) {
-		this(control, injector, job, fileExtension, SWT.BORDER | SWT.V_SCROLL | SWT.H_SCROLL);
+	public EmbeddedXtextEditor(Composite control, Injector injector) {
+		this(control, injector, SWT.BORDER | SWT.V_SCROLL | SWT.H_SCROLL);
 	}
 
 	public Composite getControl() {
@@ -225,14 +227,6 @@ public class EmbeddedXtextEditor {
 		GridData data = new GridData(SWT.FILL, SWT.FILL, true, true);
 		control.setLayoutData(data);
 
-		fTextListener = new ITextListener() {
-			public void textChanged(TextEvent event) {
-				if (event.getDocumentEvent() != null)
-					doSourceChanged(event.getDocumentEvent().getDocument());
-			}
-		};
-		fSourceViewer.addTextListener(fTextListener);
-		
 		fSourceViewer.getTextWidget().addFocusListener(new FocusListener() {
 			private final IHandlerService handlerService= (IHandlerService) PlatformUI.getWorkbench().getAdapter(IHandlerService.class);
 			private final Expression expression = new ActiveShellExpression(fSourceViewer.getControl().getShell());
@@ -253,7 +247,7 @@ public class EmbeddedXtextEditor {
 	private void createViewer(Composite parent) {
 		createSourceViewerHandle(parent);
 		setText(fDocument, "");
-		fHighlightingHelper.install(fViewerConfiguration, fSourceViewer, fInjector);
+		fHighlightingHelper.install(fViewerConfiguration, fSourceViewer);
 	}
 	
 	private void createSourceViewerHandle(Composite parent) {
@@ -298,12 +292,10 @@ public class EmbeddedXtextEditor {
 	public void update(String model) {
 		IDocument document = fSourceViewer.getDocument();
 		
-		fSourceViewer.removeTextListener(fTextListener);
 		fSourceViewer.setRedraw(false);
 		document.set(model);
 		fSourceViewer.setVisibleRegion(0, model.length());
 		fSourceViewer.setRedraw(true);
-		fSourceViewer.addTextListener(fTextListener);
 		
 		// Fix strange behavior when update(EObject) catch XtextSerializationException
 		if (fDeselectOnNextUpdate) {
@@ -393,16 +385,4 @@ public class EmbeddedXtextEditor {
 	    }
 	}
 	
-	protected void doSourceChanged(IDocument document) {
-		if (fReconcilerJob.cancel()) {
-			fReconcilerJob.schedule(500L);
-		} else {
-			try {
-				fReconcilerJob.join();
-				fReconcilerJob.schedule();
-			} catch (InterruptedException e) {
-				e.printStackTrace();
-			}
-		}
-	}
 }

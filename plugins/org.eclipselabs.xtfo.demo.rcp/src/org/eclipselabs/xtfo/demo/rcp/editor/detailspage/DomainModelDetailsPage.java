@@ -18,8 +18,6 @@ import java.util.Iterator;
 import org.eclipse.core.runtime.IProgressMonitor;
 import org.eclipse.core.runtime.IStatus;
 import org.eclipse.core.runtime.Status;
-import org.eclipse.core.runtime.SubProgressMonitor;
-import org.eclipse.core.runtime.jobs.ISchedulingRule;
 import org.eclipse.core.runtime.jobs.Job;
 import org.eclipse.emf.common.command.Command;
 import org.eclipse.emf.common.command.CompoundCommand;
@@ -46,9 +44,8 @@ import org.eclipse.ui.forms.widgets.Section;
 import org.eclipse.xtext.example.ui.internal.DomainmodelActivator;
 import org.eclipse.xtext.parser.IParseResult;
 import org.eclipse.xtext.resource.XtextResource;
-import org.eclipse.xtext.ui.editor.SchedulingRuleFactory;
 import org.eclipse.xtext.ui.editor.model.IXtextDocument;
-import org.eclipse.xtext.ui.editor.validation.ValidationJob;
+import org.eclipse.xtext.ui.editor.model.IXtextModelListener;
 import org.eclipse.xtext.util.concurrent.IUnitOfWork;
 import org.eclipselabs.xtfo.demo.metamodel.demo.DemoPackage;
 import org.eclipselabs.xtfo.demo.metamodel.demo.DomainModelWrapper;
@@ -174,9 +171,14 @@ public class DomainModelDetailsPage extends EObjectAbstractDetailsPage {
 		data.horizontalSpan = 2;
 		editorComposite.setLayoutData(data);
 		
-		final Job reconcilerJob = new EmbeddedXtextEditorReconciler();
-		editor = new EmbeddedXtextEditor(editorComposite, injector, reconcilerJob, "dmodel");
+		editor = new EmbeddedXtextEditor(editorComposite, injector);
 		
+		editor.getDocument().addModelListener(new IXtextModelListener() {
+			public void modelChanged(XtextResource resource) {
+				reconcileChangedModel();
+			}
+		});
+
 		// we must deactivate the Cut/Copy/Paste global actions contributed by the EditingDomain action bar
 		editor.getViewer().getTextWidget().addFocusListener(new FocusListener() {
 			public void focusLost(FocusEvent e) {
@@ -190,80 +192,7 @@ public class DomainModelDetailsPage extends EObjectAbstractDetailsPage {
 		
 		s1.setClient(client);
 	}
-	
-	
-	private static ISchedulingRule SCHEDULING_RULE = SchedulingRuleFactory.INSTANCE.newSequence();
-	private class EmbeddedXtextEditorReconciler extends Job {
-		public EmbeddedXtextEditorReconciler() {
-			super("EmbeddedXtextEditorReconciler");
-			setRule(SCHEDULING_RULE);
-		}
-		
-		@Override
-		protected IStatus run(IProgressMonitor monitor) {
-			try {
-				// joining on the validation is mandatory to avoid concurrent modification exception 
-				Job.getJobManager().join(ValidationJob.XTEXT_VALIDATION_FAMILY, new SubProgressMonitor(monitor, 10));
-			} catch (Exception e) {
-				// silently ignore validation exception and join issue.
-			}
-			
-			// The command to execute
-			CompoundCommand compoundCommand = new CompoundCommand() {
-				@Override
-				public Collection<?> getAffectedObjects() {
-					return Collections.singletonList(getEditedEObject());
-				}
-			};
-			
-			EditingDomain editingDomain = getEditor().getEditingDomain();
-			
-			// we will update the edited EObject only if there is a diff in the source viewer
-			boolean updateEditedEObject = !editor.getViewer().getDocument().get().equals(getEditedEObject().getAsString());
-			
-			if (updateEditedEObject) {
-				compoundCommand.append(SetCommand.create(editingDomain, getEditedEObject(), DemoPackage.Literals.DOMAIN_MODEL_WRAPPER__AS_STRING, editor.getViewer().getDocument().get()));
-			}
-			
-			if (editor.getDocument() != null) { 
-				if (documentHasErrors(editor.getDocument())) {
-					// Parsing error, we don't do aything
-					updateEditedEObject = false;
-				}
-			} else {
-				// document is null or already disposed, we don't do anything
-				updateEditedEObject = false;
-			}
-			
-			if (updateEditedEObject) {
-				org.eclipse.xtext.example.domainmodel.DomainModel astRootElement = getEditedEObject().getAstRootElement();
-				if (!astRootElement.eContents().isEmpty()) {
-					// remove all previous elements in the edited object
-					compoundCommand.append(DeleteCommand.create(editingDomain, astRootElement.eContents()));
-				}
-				
-				EObject rootASTElement = editor.getResource().getParseResult().getRootASTElement();			
-				if (rootASTElement != null && !rootASTElement.eContents().isEmpty()) {
-					Iterator<EObject> rootASTContentIt = rootASTElement.eContents().iterator();
-					while (rootASTContentIt.hasNext()) {
-						final EObject original = rootASTContentIt.next();
-						EObject copy = EcoreUtil.copy(original);
-						EStructuralFeature eContainingFeature = original.eContainingFeature();
-						if (eContainingFeature.isMany()) {
-							compoundCommand.append(AddCommand.create(editingDomain, astRootElement, eContainingFeature, Collections.singletonList(copy)));
-						} else {
-							compoundCommand.append(SetCommand.create(editingDomain, astRootElement, eContainingFeature, copy));
-						}
-					}
-				}
-			}
-			
-			editingDomain.getCommandStack().execute(compoundCommand);
-			
-			return Status.OK_STATUS;
-		}
-	};
-	
+
 	private boolean documentHasErrors(final IXtextDocument xtextDocument) {
 		return (xtextDocument.readOnly(new IUnitOfWork<Boolean, XtextResource>() {
 			public Boolean exec(XtextResource state) throws Exception {
@@ -281,6 +210,60 @@ public class DomainModelDetailsPage extends EObjectAbstractDetailsPage {
 		textWidget.removeModifyListener(modifyListener);
 		textWidget.setText(getEditedEObject().getName() == null ? "" : getEditedEObject().getName());
 		textWidget.addModifyListener(modifyListener);
+	}
+
+	private void reconcileChangedModel() {
+		// The command to execute
+		CompoundCommand compoundCommand = new CompoundCommand() {
+			@Override
+			public Collection<?> getAffectedObjects() {
+				return Collections.singletonList(getEditedEObject());
+			}
+		};
+		
+		EditingDomain editingDomain = getEditor().getEditingDomain();
+		
+		// we will update the edited EObject only if there is a diff in the source viewer
+		boolean updateEditedEObject = !editor.getViewer().getDocument().get().equals(getEditedEObject().getAsString());
+		
+		if (updateEditedEObject) {
+			compoundCommand.append(SetCommand.create(editingDomain, getEditedEObject(), DemoPackage.Literals.DOMAIN_MODEL_WRAPPER__AS_STRING, editor.getViewer().getDocument().get()));
+		}
+		
+		if (editor.getDocument() != null) { 
+			if (documentHasErrors(editor.getDocument())) {
+				// Parsing error, we don't do aything
+				updateEditedEObject = false;
+			}
+		} else {
+			// document is null or already disposed, we don't do anything
+			updateEditedEObject = false;
+		}
+		
+		if (updateEditedEObject) {
+			org.eclipse.xtext.example.domainmodel.DomainModel astRootElement = getEditedEObject().getAstRootElement();
+			if (!astRootElement.eContents().isEmpty()) {
+				// remove all previous elements in the edited object
+				compoundCommand.append(DeleteCommand.create(editingDomain, astRootElement.eContents()));
+			}
+			
+			EObject rootASTElement = editor.getResource().getParseResult().getRootASTElement();			
+			if (rootASTElement != null && !rootASTElement.eContents().isEmpty()) {
+				Iterator<EObject> rootASTContentIt = rootASTElement.eContents().iterator();
+				while (rootASTContentIt.hasNext()) {
+					final EObject original = rootASTContentIt.next();
+					EObject copy = EcoreUtil.copy(original);
+					EStructuralFeature eContainingFeature = original.eContainingFeature();
+					if (eContainingFeature.isMany()) {
+						compoundCommand.append(AddCommand.create(editingDomain, astRootElement, eContainingFeature, Collections.singletonList(copy)));
+					} else {
+						compoundCommand.append(SetCommand.create(editingDomain, astRootElement, eContainingFeature, copy));
+					}
+				}
+			}
+		}
+		
+		editingDomain.getCommandStack().execute(compoundCommand);
 	}
 
 }

@@ -16,7 +16,7 @@ import org.eclipse.xtext.ui.editor.XtextSourceViewerConfiguration;
 import org.eclipse.xtext.ui.editor.preferences.IPreferenceStoreAccess;
 import org.eclipse.xtext.ui.editor.syntaxcoloring.HighlightingPresenter;
 
-import com.google.inject.Injector;
+import com.google.inject.Inject;
 import com.google.inject.Provider;
 
 /**
@@ -24,13 +24,21 @@ import com.google.inject.Provider;
  */
 public class HighlightingHelper implements IPropertyChangeListener {
 
+	@Inject
 	private Provider<HighlightingReconciler> reconcilerProvider;
+
+	@Inject
 	private Provider<HighlightingPresenter> presenterProvider;
+
+	@Inject
 	private IPreferenceStoreAccess preferenceStoreAccessor;
 	
 	/** Highlighting presenter */
+	@Inject
 	private HighlightingPresenter fPresenter;
+
 	/** Highlighting reconciler */
+	@Inject
 	private HighlightingReconciler fReconciler;
 
 	/** The source viewer */
@@ -40,13 +48,9 @@ public class HighlightingHelper implements IPropertyChangeListener {
 	/** The presentation reconciler */
 	private XtextPresentationReconciler fPresentationReconciler;
 
-	public void install(XtextSourceViewerConfiguration configuration, XtextSourceViewer sourceViewer, Injector injector) {
+	public void install(XtextSourceViewerConfiguration configuration, XtextSourceViewer sourceViewer) {
 		fSourceViewer= sourceViewer;
 		fConfiguration= configuration;
-		
-		reconcilerProvider = injector.getProvider(HighlightingReconciler.class);
-		presenterProvider = injector.getProvider(HighlightingPresenter.class);
-		preferenceStoreAccessor = injector.getInstance(IPreferenceStoreAccess.class);
 		
 		fPresentationReconciler= (XtextPresentationReconciler) fConfiguration.getPresentationReconciler(sourceViewer);
 		preferenceStoreAccessor.getPreferenceStore().addPropertyChangeListener(this);
