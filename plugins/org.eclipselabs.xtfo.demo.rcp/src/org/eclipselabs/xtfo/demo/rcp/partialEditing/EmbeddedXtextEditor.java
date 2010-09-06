@@ -35,9 +35,22 @@ import org.eclipse.jface.action.IAction;
 import org.eclipse.jface.commands.ActionHandler;
 import org.eclipse.jface.text.IDocument;
 import org.eclipse.jface.text.ISynchronizable;
+import org.eclipse.jface.text.source.Annotation;
 import org.eclipse.jface.text.source.AnnotationModel;
+import org.eclipse.jface.text.source.AnnotationPainter;
+import org.eclipse.jface.text.source.AnnotationRulerColumn;
+import org.eclipse.jface.text.source.CompositeRuler;
+import org.eclipse.jface.text.source.IAnnotationAccess;
+import org.eclipse.jface.text.source.IAnnotationAccessExtension;
+import org.eclipse.jface.text.source.IOverviewRuler;
+import org.eclipse.jface.text.source.ISharedTextColors;
 import org.eclipse.jface.text.source.ISourceViewer;
+import org.eclipse.jface.text.source.IVerticalRuler;
+import org.eclipse.jface.text.source.IVerticalRulerColumn;
+import org.eclipse.jface.text.source.OverviewRuler;
 import org.eclipse.jface.text.source.SourceViewer;
+import org.eclipse.jface.text.source.projection.ProjectionSupport;
+import org.eclipse.jface.text.source.projection.ProjectionViewer;
 import org.eclipse.swt.SWT;
 import org.eclipse.swt.events.DisposeEvent;
 import org.eclipse.swt.events.DisposeListener;
@@ -53,6 +66,7 @@ import org.eclipse.ui.contexts.IContextService;
 import org.eclipse.ui.editors.text.EditorsUI;
 import org.eclipse.ui.handlers.IHandlerActivation;
 import org.eclipse.ui.handlers.IHandlerService;
+import org.eclipse.ui.internal.editors.text.EditorsPlugin;
 import org.eclipse.ui.texteditor.AbstractDecoratedTextEditorPreferenceConstants;
 import org.eclipse.ui.texteditor.AnnotationPreference;
 import org.eclipse.ui.texteditor.DefaultMarkerAnnotationAccess;
@@ -134,6 +148,15 @@ public class EmbeddedXtextEditor {
 	@Inject
 	private CharacterPairMatcher characterPairMatcher;
 	
+	@Inject(optional = true)
+	private AnnotationPainter.IDrawingStrategy projectionAnnotationDrawingStrategy;
+	
+	private EmbeddedFoldingStructureProvider fFoldingStructureProvider;
+	
+	private IOverviewRuler fOverviewRuler;
+	
+	private IAnnotationAccess fAnnotationAccess;
+	
 	/**
 	 * Creates a new EmbeddedXtextEditor.
 	 * 
@@ -148,7 +171,9 @@ public class EmbeddedXtextEditor {
 	public EmbeddedXtextEditor(Composite control, Injector injector, int style) {
 		fControl = control;
 		fStyle = style;
-
+		fAnnotationPreferences= EditorsPlugin.getDefault().getMarkerAnnotationPreferences();
+		fFoldingStructureProvider = new EmbeddedFoldingStructureProvider();
+		
 		injector.injectMembers(this);
 
 		createEditor(fControl);
@@ -234,42 +259,54 @@ public class EmbeddedXtextEditor {
 	}
 	
 	private void createViewer(Composite parent) {
-		createSourceViewerHandle(parent);
+		createSourceViewer(parent);
+		installFoldingSupport(fSourceViewer);
 		setText(fDocument, "");
 		fHighlightingHelper.install(fViewerConfiguration, fSourceViewer);
 	}
 	
-	private void createSourceViewerHandle(Composite parent) {
-		fSourceViewer = fSourceViewerFactory.createSourceViewer(parent, null, null, false, fStyle);
+	/**
+	 * Creates the vertical ruler to be used by this editor.
+	 * Subclasses may re-implement this method.
+	 *
+	 * @return the vertical ruler
+	 */
+	private IVerticalRuler createVerticalRuler() {
+		return new CompositeRuler();
+	}
+	
+	/** The editor's vertical ruler. */
+	private IVerticalRuler fVerticalRuler;
+	
+	/**
+	 * Creates the annotation ruler column. Subclasses may re-implement or extend.
+	 *
+	 * @param ruler the composite ruler that the column will be added
+	 * @return an annotation ruler column
+	 * @since 3.2
+	 */
+	protected IVerticalRulerColumn createAnnotationRulerColumn(CompositeRuler ruler) {
+		return new AnnotationRulerColumn(VERTICAL_RULER_WIDTH, getAnnotationAccess());
+	}
+
+	
+	private void createSourceViewer(Composite parent) {
+		fVerticalRuler = createVerticalRuler();
+		fSourceViewer = fSourceViewerFactory.createSourceViewer(parent, fVerticalRuler, getOverviewRuler(), true, fStyle);
 		fViewerConfiguration = fSourceViewerConfigurationProvider.get();
-		fSourceViewer.configure(fViewerConfiguration);
+		fSourceViewer.configure(fViewerConfiguration);	
 		
-		final SourceViewerDecorationSupport viewerDecorationSupport = new SourceViewerDecorationSupport(fSourceViewer, null, new DefaultMarkerAnnotationAccess(), EditorsUI.getSharedTextColors());
-		MarkerAnnotationPreferences annotationPreferences = new MarkerAnnotationPreferences();
-		Iterator<AnnotationPreference> e= Iterators.filter(annotationPreferences.getAnnotationPreferences().iterator(), AnnotationPreference.class);
-		while (e.hasNext())
-			viewerDecorationSupport.setAnnotationPreference(e.next());
+		fProjectionSupport = installProjectionSupport(fSourceViewer);
 		
-		viewerDecorationSupport.setCursorLinePainterPreferenceKeys(
-				AbstractDecoratedTextEditorPreferenceConstants.EDITOR_CURRENT_LINE, 
-				AbstractDecoratedTextEditorPreferenceConstants.EDITOR_CURRENT_LINE_COLOR);
-		viewerDecorationSupport.setMarginPainterPreferenceKeys(
-				AbstractDecoratedTextEditorPreferenceConstants.EDITOR_PRINT_MARGIN, 
-				AbstractDecoratedTextEditorPreferenceConstants.EDITOR_PRINT_MARGIN_COLOR, 
-				AbstractDecoratedTextEditorPreferenceConstants.EDITOR_PRINT_MARGIN_COLUMN);
-		
-		if (characterPairMatcher != null) {
-			viewerDecorationSupport.setCharacterPairMatcher(characterPairMatcher);
-			viewerDecorationSupport.setMatchingCharacterPainterPreferenceKeys(BracketMatchingPreferencesInitializer.IS_ACTIVE_KEY,
-					BracketMatchingPreferencesInitializer.COLOR_KEY);
-		}
+		// make sure the source viewer decoration support is initialized
+		getSourceViewerDecorationSupport(fSourceViewer);
 		
 		fSourceViewer.getTextWidget().addFocusListener(new SourceViewerFocusListener());
 		
-		viewerDecorationSupport.install(fPreferenceStoreAccess.getPreferenceStore());
+		fSourceViewerDecorationSupport.install(fPreferenceStoreAccess.getPreferenceStore());
 		parent.addDisposeListener(new DisposeListener() {
 			public void widgetDisposed(DisposeEvent e) {
-				viewerDecorationSupport.dispose();
+				fSourceViewerDecorationSupport.dispose();
 			}
 		});
 		fDocument = fDocumentProvider.get();
@@ -288,6 +325,136 @@ public class EmbeddedXtextEditor {
 					}
 				}, CheckMode.FAST_ONLY);
 		fDocument.setValidationJob(job);
+	}
+	
+	private ProjectionSupport fProjectionSupport;
+	
+	private static final String ERROR_ANNOTATION_TYPE = "org.eclipse.xtext.ui.editor.error";
+	private static final String WARNING_ANNOTATION_TYPE = "org.eclipse.xtext.ui.editor.warning";
+	
+	private ProjectionSupport installProjectionSupport(ProjectionViewer projectionViewer) {
+		ProjectionSupport projectionSupport = new ProjectionSupport(projectionViewer, getAnnotationAccess(),
+				getSharedColors());
+		projectionSupport.addSummarizableAnnotationType(WARNING_ANNOTATION_TYPE); //$NON-NLS-1$
+		projectionSupport.addSummarizableAnnotationType(ERROR_ANNOTATION_TYPE); //$NON-NLS-1$
+		projectionSupport.setAnnotationPainterDrawingStrategy(projectionAnnotationDrawingStrategy);
+		projectionSupport.install();
+		return projectionSupport;
+	}
+	
+	/**
+	 * Helper for managing the decoration support of this editor's viewer.
+	 *
+	 * <p>This field should not be referenced by subclasses. It is <code>protected</code> for API
+	 * compatibility reasons and will be made <code>private</code> soon. Use
+	 * {@link #getSourceViewerDecorationSupport(ISourceViewer)} instead.</p>
+	 */
+	private SourceViewerDecorationSupport fSourceViewerDecorationSupport;
+	
+	private void installFoldingSupport(ProjectionViewer projectionViewer) {
+		fFoldingStructureProvider.install(this, projectionViewer);
+		projectionViewer.doOperation(ProjectionViewer.TOGGLE);
+		fFoldingStructureProvider.initialize();
+	}
+	
+	/**
+	 * Returns the source viewer decoration support.
+	 *
+	 * @param viewer the viewer for which to return a decoration support
+	 * @return the source viewer decoration support
+	 */
+	private SourceViewerDecorationSupport getSourceViewerDecorationSupport(ISourceViewer viewer) {
+		if (fSourceViewerDecorationSupport == null) {
+			fSourceViewerDecorationSupport= new SourceViewerDecorationSupport(viewer, getOverviewRuler(), getAnnotationAccess(), getSharedColors());
+			configureSourceViewerDecorationSupport(fSourceViewerDecorationSupport);
+		}
+		return fSourceViewerDecorationSupport;
+	}
+	
+	/**
+	 * Configures the decoration support for this editor's source viewer. Subclasses may override this
+	 * method, but should call their superclass' implementation at some point.
+	 *
+	 * @param support the decoration support to configure
+	 */
+	private void configureSourceViewerDecorationSupport(SourceViewerDecorationSupport support) {
+
+		Iterator<AnnotationPreference> e = Iterators.filter(fAnnotationPreferences.getAnnotationPreferences().iterator(), AnnotationPreference.class);
+		while (e.hasNext())
+			support.setAnnotationPreference((AnnotationPreference) e.next());
+
+		support.setCursorLinePainterPreferenceKeys(AbstractDecoratedTextEditorPreferenceConstants.EDITOR_CURRENT_LINE, AbstractDecoratedTextEditorPreferenceConstants.EDITOR_CURRENT_LINE_COLOR);
+		support.setMarginPainterPreferenceKeys(AbstractDecoratedTextEditorPreferenceConstants.EDITOR_PRINT_MARGIN, AbstractDecoratedTextEditorPreferenceConstants.EDITOR_PRINT_MARGIN_COLOR, AbstractDecoratedTextEditorPreferenceConstants.EDITOR_PRINT_MARGIN_COLUMN);
+//		support.setSymbolicFontName(getFontPropertyPreferenceKey());
+		
+		if (characterPairMatcher != null) {
+			support.setCharacterPairMatcher(characterPairMatcher);
+			support.setMatchingCharacterPainterPreferenceKeys(BracketMatchingPreferencesInitializer.IS_ACTIVE_KEY,
+					BracketMatchingPreferencesInitializer.COLOR_KEY);
+		}
+	}
+	
+	/**
+	 * Returns the overview ruler.
+	 *
+	 * @return the overview ruler
+	 */
+	private IOverviewRuler getOverviewRuler() {
+		if (fOverviewRuler == null)
+			fOverviewRuler= createOverviewRuler(getSharedColors());
+		return fOverviewRuler;
+	}
+	
+	/** The width of the vertical ruler. */
+	private static final int VERTICAL_RULER_WIDTH= 12;
+	
+	/**
+	 * Returns the annotation access.
+	 *
+	 * @return the annotation access
+	 */
+	private IAnnotationAccess getAnnotationAccess() {
+		if (fAnnotationAccess == null)
+			fAnnotationAccess= createAnnotationAccess();
+		return fAnnotationAccess;
+	}
+	
+	/**
+	 * Creates the annotation access for this editor.
+	 *
+	 * @return the created annotation access
+	 */
+	private IAnnotationAccess createAnnotationAccess() {
+		return new DefaultMarkerAnnotationAccess() {
+			@Override
+			public int getLayer(Annotation annotation) {
+				if (annotation.isMarkedDeleted()) {
+					return IAnnotationAccessExtension.DEFAULT_LAYER;
+				}
+				return super.getLayer(annotation);
+			}
+		};
+	}
+	
+	/**
+	 * The annotation preferences.
+	 */
+	private MarkerAnnotationPreferences fAnnotationPreferences;
+	
+	private IOverviewRuler createOverviewRuler(ISharedTextColors sharedColors) {
+		IOverviewRuler ruler= new OverviewRuler(getAnnotationAccess(), VERTICAL_RULER_WIDTH, sharedColors);
+
+		Iterator<?> e= fAnnotationPreferences.getAnnotationPreferences().iterator();
+		while (e.hasNext()) {
+			AnnotationPreference preference= (AnnotationPreference) e.next();
+			if (preference.contributesToHeader())
+				ruler.addHeaderAnnotationType(preference.getAnnotationType());
+		}
+		return ruler;
+	}
+	
+	private ISharedTextColors getSharedColors() {
+		return EditorsUI.getSharedTextColors();
 	}
 	
 	/**
