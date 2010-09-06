@@ -197,6 +197,11 @@ public class DomainModelDetailsPage extends EObjectAbstractDetailsPage {
 		return (xtextDocument.readOnly(new IUnitOfWork<Boolean, XtextResource>() {
 			public Boolean exec(XtextResource state) throws Exception {
 				IParseResult parseResult = state.getParseResult();
+				try {
+					EcoreUtil.resolveAll(state);
+				} catch (Exception e) {
+					// ignore
+				}
 				return !state.getErrors().isEmpty() || parseResult == null || !parseResult.getParseErrors().isEmpty();
 			}
 		}));
@@ -248,7 +253,7 @@ public class DomainModelDetailsPage extends EObjectAbstractDetailsPage {
 			}
 			
 			EObject rootASTElement = editor.getResource().getParseResult().getRootASTElement();			
-			if (rootASTElement != null && !rootASTElement.eContents().isEmpty()) {
+			if (rootASTElement != null) {
 				Iterator<EObject> rootASTContentIt = rootASTElement.eContents().iterator();
 				while (rootASTContentIt.hasNext()) {
 					final EObject original = rootASTContentIt.next();

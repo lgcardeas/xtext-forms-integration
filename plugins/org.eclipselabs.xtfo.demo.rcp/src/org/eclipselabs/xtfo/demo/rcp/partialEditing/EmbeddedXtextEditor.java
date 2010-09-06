@@ -106,8 +106,6 @@ public class EmbeddedXtextEditor {
 	private static final String XTEXT_UI_FORMAT_ACTION = "org.eclipse.xtext.ui.FormatAction";
 	private static final String XTEXT_UI_TOGGLE_SL_COMMENT_ACTION = "org.eclipse.xtext.ui.ToggleCommentAction";
 
-	private static final String SYNTHETIC_SCHEME = "synthetic";
-	
 	private Composite fControl;
 	private int fStyle;
 	
@@ -483,7 +481,7 @@ public class EmbeddedXtextEditor {
 	public void update(EObject eObject, String asString) {
 		if (eObject != null) {
 			EObject asStringEObject = null;
-			XtextResource asStringResource = (XtextResource) fResourceSetProvider.get(null).createResource(URI.createURI(SYNTHETIC_SCHEME + ":/asStringResource." + fFileExtension));
+			XtextResource asStringResource = (XtextResource) fResourceSetProvider.get(null).createResource(URI.createURI("asStringResource." + fFileExtension));
 			try {
 				asStringResource.load(new StringInputStream(asString), Collections.emptyMap());
 				if (!asStringResource.getContents().isEmpty()) {
@@ -492,22 +490,35 @@ public class EmbeddedXtextEditor {
 			} catch (IOException e) {
 				// ignore, will set the string to the serialization of the given eObject
 			}
+
+			try {
+				EcoreUtil.resolveAll(asStringResource);
+			} catch (Exception e) {
+				// ignore
+			}
 			
 			if (!asStringResource.getErrors().isEmpty() || (asStringResource.getParseResult() != null && !asStringResource.getParseResult().getParseErrors().isEmpty())) {
 				// if there are parsing errors in the saved string, then we update with it
 				update(asString);
 			} else if (asStringEObject != null) {
 				try {
-					Resource copyResource = (XtextResource) fResourceSetProvider.get(null).createResource(URI.createURI(SYNTHETIC_SCHEME + ":/copyResource." + fFileExtension));
-					EObject copyEObject = EcoreUtil.copy(eObject);
-					copyResource.getContents().add(copyEObject);
-					if (!equals(copyEObject, asStringEObject)) {
-//						String model = getResource().getSerializer().serialize(copyEObject, SaveOptions.newBuilder().noValidation().format().getOptions());
-						update(asString); // FIXME: should update with the serialized form of the copyEObject but throw RuntimeException!!! 
-					} else {
-						// if there is no error and the content are equals, then we also update with the string
+					Resource copyResource = (XtextResource) fResourceSetProvider.get(null).createResource(URI.createURI("copyResource." + fFileExtension));
+					
+					try {
+						EObject copyEObject = EcoreUtil.copy(eObject);
+						copyResource.getContents().add(copyEObject);
+						EcoreUtil.resolveAll(copyResource);
+						if (!equals(copyEObject, asStringEObject)) {
+//							String model = getResource().getSerializer().serialize(copyEObject, SaveOptions.newBuilder().noValidation().format().getOptions());
+							update(asString); // FIXME: should update with the serialized form of the copyEObject but throw RuntimeException!!! 
+						} else {
+							// if there is no error and the content are equals, then we also update with the string
+							update(asString);
+						}
+					} catch (Exception e) {
 						update(asString);
 					}
+
 					copyResource.unload();
 					copyResource.getResourceSet().getResources().remove(copyResource);
 				} catch (Exception e) {
@@ -611,12 +622,8 @@ public class EmbeddedXtextEditor {
 	
 	protected XtextResource createResource() {
 		ResourceSet resourceSet = fResourceSetProvider.get(null);
-//		Resource grammarResource = resourceSet.createResource(
-//				URI.createURI(SYNTHETIC_SCHEME + ":/" + fGrammarAccess.getGrammar().getName() + ".xtext"));
-//		grammarResource.getContents().add(EcoreUtil.copy(fGrammarAccess.getGrammar()));
 		XtextResource result = (XtextResource) resourceSet.createResource(
-				URI.createURI(SYNTHETIC_SCHEME + ":/" + fGrammarAccess.getGrammar().getName() + "." + fFileExtension));
-		resourceSet.getResources().add(result);
+				URI.createURI(fGrammarAccess.getGrammar().getName() + "." + fFileExtension));
 		return result;
 	}
 		

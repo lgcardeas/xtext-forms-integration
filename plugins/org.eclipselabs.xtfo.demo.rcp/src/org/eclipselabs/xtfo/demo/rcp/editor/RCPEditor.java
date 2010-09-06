@@ -34,6 +34,9 @@ import org.eclipse.core.runtime.CoreException;
 import org.eclipse.core.runtime.IPath;
 import org.eclipse.core.runtime.IProgressMonitor;
 import org.eclipse.core.runtime.NullProgressMonitor;
+import org.eclipse.core.runtime.OperationCanceledException;
+import org.eclipse.core.runtime.SubProgressMonitor;
+import org.eclipse.core.runtime.jobs.Job;
 import org.eclipse.emf.common.command.BasicCommandStack;
 import org.eclipse.emf.common.command.Command;
 import org.eclipse.emf.common.command.CommandStack;
@@ -109,6 +112,7 @@ import org.eclipse.ui.views.properties.PropertySheet;
 import org.eclipse.ui.views.properties.PropertySheetPage;
 import org.eclipse.xtext.example.arithmetics.arithmetics.provider.ArithmeticsItemProviderAdapterFactory;
 import org.eclipse.xtext.example.domainmodel.provider.DomainmodelItemProviderAdapterFactory;
+import org.eclipse.xtext.ui.editor.reconciler.XtextReconciler;
 import org.eclipselabs.xtfo.demo.metamodel.demo.provider.DemoItemProviderAdapterFactory;
 import org.eclipselabs.xtfo.demo.rcp.Activator;
 import org.eclipselabs.xtfo.demo.rcp.editor.pages.MasterDetailsPage;
@@ -891,6 +895,14 @@ public class RCPEditor extends FormEditor implements IEditingDomainProvider,
 	 */
 	@Override
 	public void doSave(IProgressMonitor progressMonitor) {
+		try {
+			Job.getJobManager().join(XtextReconciler.class.getName(), new SubProgressMonitor(progressMonitor, 2));
+		} catch (OperationCanceledException e) {
+			
+		} catch (InterruptedException e) {
+			
+		}
+		
 		// Save only resources that have actually changed.
 		//
 		final Map<Object, Object> saveOptions = new HashMap<Object, Object>();
