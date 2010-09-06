@@ -31,7 +31,7 @@ import org.eclipse.emf.ecore.EObject;
 import org.eclipse.emf.ecore.resource.Resource;
 import org.eclipse.emf.ecore.resource.ResourceSet;
 import org.eclipse.emf.ecore.util.EcoreUtil;
-import org.eclipse.jface.action.Action;
+import org.eclipse.jface.action.IAction;
 import org.eclipse.jface.commands.ActionHandler;
 import org.eclipse.jface.text.IDocument;
 import org.eclipse.jface.text.ISynchronizable;
@@ -48,9 +48,12 @@ import org.eclipse.swt.widgets.Composite;
 import org.eclipse.swt.widgets.Control;
 import org.eclipse.ui.ActiveShellExpression;
 import org.eclipse.ui.PlatformUI;
+import org.eclipse.ui.contexts.IContextActivation;
+import org.eclipse.ui.contexts.IContextService;
 import org.eclipse.ui.editors.text.EditorsUI;
 import org.eclipse.ui.handlers.IHandlerActivation;
 import org.eclipse.ui.handlers.IHandlerService;
+import org.eclipse.ui.texteditor.AbstractDecoratedTextEditorPreferenceConstants;
 import org.eclipse.ui.texteditor.AnnotationPreference;
 import org.eclipse.ui.texteditor.DefaultMarkerAnnotationAccess;
 import org.eclipse.ui.texteditor.ITextEditorActionDefinitionIds;
@@ -61,6 +64,8 @@ import org.eclipse.xtext.IGrammarAccess;
 import org.eclipse.xtext.resource.XtextResource;
 import org.eclipse.xtext.ui.editor.XtextSourceViewer;
 import org.eclipse.xtext.ui.editor.XtextSourceViewerConfiguration;
+import org.eclipse.xtext.ui.editor.bracketmatching.BracketMatchingPreferencesInitializer;
+import org.eclipse.xtext.ui.editor.bracketmatching.CharacterPairMatcher;
 import org.eclipse.xtext.ui.editor.model.IXtextDocument;
 import org.eclipse.xtext.ui.editor.model.XtextDocument;
 import org.eclipse.xtext.ui.editor.preferences.IPreferenceStoreAccess;
@@ -76,6 +81,7 @@ import org.eclipse.xtext.validation.Issue;
 
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.Iterators;
+import com.google.common.collect.Lists;
 import com.google.inject.Inject;
 import com.google.inject.Injector;
 import com.google.inject.Provider;
@@ -83,7 +89,10 @@ import com.google.inject.name.Named;
 
 public class EmbeddedXtextEditor {
 
-	public static final String SYNTHETIC_SCHEME = "synthetic";
+	private static final String XTEXT_UI_FORMAT_ACTION = "org.eclipse.xtext.ui.FormatAction";
+	private static final String XTEXT_UI_TOGGLE_SL_COMMENT_ACTION = "org.eclipse.xtext.ui.ToggleCommentAction";
+
+	private static final String SYNTHETIC_SCHEME = "synthetic";
 	
 	private Composite fControl;
 	private int fStyle;
@@ -121,16 +130,10 @@ public class EmbeddedXtextEditor {
 
 	@Inject
 	private IPreferenceStoreAccess fPreferenceStoreAccess;
-
-//	private ITextListener fTextListener;
-	private boolean fDeselectOnNextUpdate;
 	
-	private ActionHandler contentAssistAction = new ActionHandler(new Action() {
-		public void run() {
-			fSourceViewer.getTextOperationTarget().doOperation(ISourceViewer.CONTENTASSIST_PROPOSALS);
-		};
-	});
-
+	@Inject
+	private CharacterPairMatcher characterPairMatcher;
+	
 	/**
 	 * Creates a new EmbeddedXtextEditor.
 	 * 
@@ -147,7 +150,7 @@ public class EmbeddedXtextEditor {
 		fStyle = style;
 
 		injector.injectMembers(this);
-		
+
 		createEditor(fControl);
 	}
 	
@@ -208,7 +211,6 @@ public class EmbeddedXtextEditor {
 			((ISynchronizable) annotationModel).setLockObject(lock);
 		}
 		fSourceViewer.setDocument(document, annotationModel);
-		fSourceViewer.setSelectedRange(0, -1);
 	}
 	
 	private XtextResource createResource(String content) {
@@ -223,25 +225,12 @@ public class EmbeddedXtextEditor {
 	
 	private void createEditor(Composite parent) {
 		createViewer(parent);
+		
 		Control control = fSourceViewer.getControl();
 		GridData data = new GridData(SWT.FILL, SWT.FILL, true, true);
 		control.setLayoutData(data);
 
-		fSourceViewer.getTextWidget().addFocusListener(new FocusListener() {
-			private final IHandlerService handlerService= (IHandlerService) PlatformUI.getWorkbench().getAdapter(IHandlerService.class);
-			private final Expression expression = new ActiveShellExpression(fSourceViewer.getControl().getShell());
-			private IHandlerActivation handlerActivation;
-
-			public void focusLost(FocusEvent e) {
-				handlerService.deactivateHandler(handlerActivation);
-			}
-			public void focusGained(FocusEvent e) {
-				handlerActivation = handlerService.activateHandler(
-						ITextEditorActionDefinitionIds.CONTENT_ASSIST_PROPOSALS, 
-						contentAssistAction, 
-						expression);
-			}
-		});
+		createActions();
 	}
 	
 	private void createViewer(Composite parent) {
@@ -260,6 +249,23 @@ public class EmbeddedXtextEditor {
 		Iterator<AnnotationPreference> e= Iterators.filter(annotationPreferences.getAnnotationPreferences().iterator(), AnnotationPreference.class);
 		while (e.hasNext())
 			viewerDecorationSupport.setAnnotationPreference(e.next());
+		
+		viewerDecorationSupport.setCursorLinePainterPreferenceKeys(
+				AbstractDecoratedTextEditorPreferenceConstants.EDITOR_CURRENT_LINE, 
+				AbstractDecoratedTextEditorPreferenceConstants.EDITOR_CURRENT_LINE_COLOR);
+		viewerDecorationSupport.setMarginPainterPreferenceKeys(
+				AbstractDecoratedTextEditorPreferenceConstants.EDITOR_PRINT_MARGIN, 
+				AbstractDecoratedTextEditorPreferenceConstants.EDITOR_PRINT_MARGIN_COLOR, 
+				AbstractDecoratedTextEditorPreferenceConstants.EDITOR_PRINT_MARGIN_COLUMN);
+		
+		if (characterPairMatcher != null) {
+			viewerDecorationSupport.setCharacterPairMatcher(characterPairMatcher);
+			viewerDecorationSupport.setMatchingCharacterPainterPreferenceKeys(BracketMatchingPreferencesInitializer.IS_ACTIVE_KEY,
+					BracketMatchingPreferencesInitializer.COLOR_KEY);
+		}
+		
+		fSourceViewer.getTextWidget().addFocusListener(new SourceViewerFocusListener());
+		
 		viewerDecorationSupport.install(fPreferenceStoreAccess.getPreferenceStore());
 		parent.addDisposeListener(new DisposeListener() {
 			public void widgetDisposed(DisposeEvent e) {
@@ -296,14 +302,6 @@ public class EmbeddedXtextEditor {
 		document.set(model);
 		fSourceViewer.setVisibleRegion(0, model.length());
 		fSourceViewer.setRedraw(true);
-		
-		// Fix strange behavior when update(EObject) catch XtextSerializationException
-		if (fDeselectOnNextUpdate) {
-			fDeselectOnNextUpdate = false;
-			fSourceViewer.setSelectedRange(0, 0);
-		}
-		
-		this.fDeselectOnNextUpdate = "".equals(model);
 	}
 	
 	/**
@@ -359,11 +357,96 @@ public class EmbeddedXtextEditor {
 		}
 	}
 	
+	private void createActions() {
+		{
+			TextViewerAction action = new TextViewerAction(fSourceViewer, ISourceViewer.CONTENTASSIST_PROPOSALS);
+			action.setText("Content Assist");
+			setAction(ITextEditorActionDefinitionIds.CONTENT_ASSIST_PROPOSALS, action);
+		}
+		
+		if (fViewerConfiguration.getContentFormatter(fSourceViewer) != null) {
+			TextViewerAction action = new TextViewerAction(fSourceViewer, ISourceViewer.FORMAT);
+			action.setText("Format");
+			setAction(XTEXT_UI_FORMAT_ACTION, action);
+		}
+
+		{
+			ToggleSLCommentAction action = new ToggleSLCommentAction(fSourceViewer); //$NON-NLS-1$
+			setAction(XTEXT_UI_TOGGLE_SL_COMMENT_ACTION, action);
+			action.configure(fSourceViewer, fViewerConfiguration);
+		}
+	}
+	
+	private void setAction(final String actionID, final IAction action) {
+		if (action.getId() == null)
+			action.setId(actionID); // make sure the action ID has been set
+		
+		fActionHandlers.add(new ActionHandler(action));
+	}
+	
+	private List<ActionHandler> fActionHandlers = Lists.newArrayList();
+	
+	/**
+	 * Source viewer focus listener that activates/deactivates action handlers on focus state change.
+	 * 
+	 * @author Mikaël Barbero
+	 *
+	 */
+	private final class SourceViewerFocusListener implements FocusListener {
+		private static final String EMBEDEDXTEXT_EDITOR_CONTEXT = "org.eclipselabs.xtfo.embededxtextEditor.context"; //$NON-NLS-1$
+		
+		private final Expression fExpression;
+		private final List<IHandlerActivation> fHandlerActivations;
+		private IContextActivation fContextActivation;
+		
+		public SourceViewerFocusListener() {
+			fExpression = new ActiveShellExpression(fSourceViewer.getControl().getShell());
+			fHandlerActivations = Lists.newArrayList();
+			
+			fSourceViewer.getControl().addDisposeListener(new DisposeListener() {
+				public void widgetDisposed(DisposeEvent e) {
+					IHandlerService handlerService = (IHandlerService) PlatformUI.getWorkbench().getAdapter(IHandlerService.class);
+					handlerService.deactivateHandlers(fHandlerActivations);
+					fHandlerActivations.clear();
+				}
+			});
+		}
+		
+		public void focusLost(FocusEvent e) {
+			IContextService contextService = (IContextService) PlatformUI.getWorkbench().
+					getActiveWorkbenchWindow().
+					getActivePage().
+					getActiveEditor().
+					getSite().
+					getService(IContextService.class);
+			contextService.deactivateContext(fContextActivation);
+			
+			IHandlerService handlerService = (IHandlerService) PlatformUI.getWorkbench().getAdapter(IHandlerService.class);
+			handlerService.deactivateHandlers(fHandlerActivations);
+		}
+
+		public void focusGained(FocusEvent e) {
+			IContextService contextService = (IContextService) PlatformUI.getWorkbench().
+					getActiveWorkbenchWindow().
+					getActivePage().
+					getActiveEditor().
+					getSite().
+					getService(IContextService.class);
+			fContextActivation = contextService.activateContext(EMBEDEDXTEXT_EDITOR_CONTEXT);
+	
+			IHandlerService handlerService = (IHandlerService) PlatformUI.getWorkbench().getAdapter(IHandlerService.class);
+			
+			for (ActionHandler actionHandler : fActionHandlers) {
+				fHandlerActivations.add(handlerService.activateHandler(actionHandler.getAction().getId(), actionHandler, fExpression));
+			}			
+		}
+	}
+	
 	protected XtextResource createResource() {
 		ResourceSet resourceSet = fResourceSetProvider.get(null);
-		Resource grammarResource = resourceSet.createResource(
-				URI.createURI(SYNTHETIC_SCHEME + ":/" + fGrammarAccess.getGrammar().getName() + ".xtext"));
-		grammarResource.getContents().add(EcoreUtil.copy(fGrammarAccess.getGrammar()));
+//		Resource grammarResource = resourceSet.createResource(
+//				URI.createURI(SYNTHETIC_SCHEME + ":/" + fGrammarAccess.getGrammar().getName() + ".xtext"));
+//		grammarResource.getContents().add(EcoreUtil.copy(fGrammarAccess.getGrammar()));
 		XtextResource result = (XtextResource) resourceSet.createResource(
 				URI.createURI(SYNTHETIC_SCHEME + ":/" + fGrammarAccess.getGrammar().getName() + "." + fFileExtension));
 		resourceSet.getResources().add(result);
@@ -373,16 +456,13 @@ public class EmbeddedXtextEditor {
 	private static boolean equals(EObject expected, EObject actual) {
 		Map<String, Object> options = ImmutableMap.<String, Object> builder().put(MatchOptions.OPTION_IGNORE_XMI_ID, Boolean.TRUE).build();
 	    MatchModel match = null;
-	    try
-	    {
+	    try {
 	        match = MatchService.doMatch(expected, actual, options);
 	        DiffModel diff = DiffService.doDiff(match, false);
 	        return diff.getDifferences().isEmpty();
 	    }
-	    catch (InterruptedException e)
-	    {
+	    catch (InterruptedException e) {
 	        throw new AssertionError(e);
 	    }
 	}
-	
 }
