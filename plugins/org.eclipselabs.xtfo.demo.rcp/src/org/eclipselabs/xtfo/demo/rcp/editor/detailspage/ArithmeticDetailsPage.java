@@ -120,7 +120,7 @@ public class ArithmeticDetailsPage extends EObjectAbstractDetailsPage {
 		
 		editorComposite.setLayout(new GridLayout());
 
-		editor = new EmbeddedXtextEditor(editorComposite, injector, SWT.BORDER);
+		editor = new EmbeddedXtextEditor(editorComposite, injector, SWT.BORDER | SWT.V_SCROLL);
 
 		editor.getDocument().addModelListener(new IXtextModelListener() {
 			public void modelChanged(XtextResource resource) {
@@ -222,17 +222,14 @@ public class ArithmeticDetailsPage extends EObjectAbstractDetailsPage {
 			}
 			
 			EObject rootASTElement = editor.getResource().getParseResult().getRootASTElement();			
-			if (rootASTElement != null && !rootASTElement.eContents().isEmpty()) {
-				Iterator<EObject> rootASTContentIt = rootASTElement.eContents().iterator();
-				while (rootASTContentIt.hasNext()) {
-					final EObject original = rootASTContentIt.next();
-					EObject copy = EcoreUtil.copy(original);
-					EStructuralFeature eContainingFeature = original.eContainingFeature();
-					if (eContainingFeature.isMany()) {
-						compoundCommand.append(AddCommand.create(editingDomain, astRootElement, eContainingFeature, Collections.singletonList(copy)));
-					} else {
-						compoundCommand.append(SetCommand.create(editingDomain, astRootElement, eContainingFeature, copy));
-					}
+			if (rootASTElement != null) {
+				EObject copyOfRootASTElement = EcoreUtil.copy(rootASTElement);
+				EStructuralFeature eContainingFeature = astRootElement.eContainingFeature();
+				
+				if (eContainingFeature.isMany()) {
+					compoundCommand.append(AddCommand.create(editingDomain, astRootElement.eContainer(), eContainingFeature, Collections.singletonList(copyOfRootASTElement)));
+				} else {
+					compoundCommand.append(SetCommand.create(editingDomain, astRootElement.eContainer(), eContainingFeature, copyOfRootASTElement));
 				}
 			}
 		}

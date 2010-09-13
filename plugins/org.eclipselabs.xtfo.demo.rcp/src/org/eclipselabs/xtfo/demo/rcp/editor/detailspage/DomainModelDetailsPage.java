@@ -8,6 +8,7 @@
  *
  * Contributors:
  *    Obeo - initial API and implementation
+ *    Cedric Vidal (ProxiAD) - integration with global scope
  */
 package org.eclipselabs.xtfo.demo.rcp.editor.detailspage;
 
@@ -41,19 +42,25 @@ import org.eclipse.swt.widgets.Text;
 import org.eclipse.ui.forms.IManagedForm;
 import org.eclipse.ui.forms.widgets.FormToolkit;
 import org.eclipse.ui.forms.widgets.Section;
+import org.eclipse.xtext.example.DomainmodelRuntimeModule;
+import org.eclipse.xtext.example.ui.DomainmodelUiModule;
 import org.eclipse.xtext.example.ui.internal.DomainmodelActivator;
 import org.eclipse.xtext.parser.IParseResult;
 import org.eclipse.xtext.resource.XtextResource;
 import org.eclipse.xtext.ui.editor.model.IXtextDocument;
 import org.eclipse.xtext.ui.editor.model.IXtextModelListener;
+import org.eclipse.xtext.ui.shared.SharedStateModule;
 import org.eclipse.xtext.util.concurrent.IUnitOfWork;
 import org.eclipselabs.xtfo.demo.metamodel.demo.DemoPackage;
 import org.eclipselabs.xtfo.demo.metamodel.demo.DomainModelWrapper;
 import org.eclipselabs.xtfo.demo.rcp.editor.ActionBarContributor;
 import org.eclipselabs.xtfo.demo.rcp.editor.RCPEditor;
 import org.eclipselabs.xtfo.demo.rcp.partialEditing.EmbeddedXtextEditor;
+import org.eclipselabs.xtfo.demo.rcp.partialEditing.EmbeddedXtextEditorModule;
 
+import com.google.inject.Guice;
 import com.google.inject.Injector;
+import com.google.inject.util.Modules;
 
 
 public class DomainModelDetailsPage extends EObjectAbstractDetailsPage {
@@ -163,7 +170,10 @@ public class DomainModelDetailsPage extends EObjectAbstractDetailsPage {
 		};
 		textWidget.addModifyListener(modifyListener);
 		
-		Injector injector = DomainmodelActivator.getInstance().getInjector("org.eclipse.xtext.example.Domainmodel");
+//		DomainmodelActivator dslActivator = DomainmodelActivator.getInstance();
+		Injector injector = getDslInjectorForEmbedded();
+		
+//		Injector injector = dslActivator.getInjector("org.eclipse.xtext.example.Domainmodel");
 		Composite editorComposite = toolkit.createComposite(client);
 		
 		editorComposite.setLayout(new GridLayout());
@@ -191,6 +201,15 @@ public class DomainModelDetailsPage extends EObjectAbstractDetailsPage {
 		});
 		
 		s1.setClient(client);
+	}
+
+	private Injector getDslInjectorForEmbedded() {
+		return Guice.createInjector(Modules.override(
+				Modules.override(
+						Modules.override(new DomainmodelRuntimeModule()).with(
+								new DomainmodelUiModule(DomainmodelActivator
+										.getInstance()))).with(
+						new SharedStateModule())).with(new EmbeddedXtextEditorModule()));
 	}
 
 	private boolean documentHasErrors(final IXtextDocument xtextDocument) {
@@ -254,16 +273,13 @@ public class DomainModelDetailsPage extends EObjectAbstractDetailsPage {
 			
 			EObject rootASTElement = editor.getResource().getParseResult().getRootASTElement();			
 			if (rootASTElement != null) {
-				Iterator<EObject> rootASTContentIt = rootASTElement.eContents().iterator();
-				while (rootASTContentIt.hasNext()) {
-					final EObject original = rootASTContentIt.next();
-					EObject copy = EcoreUtil.copy(original);
-					EStructuralFeature eContainingFeature = original.eContainingFeature();
-					if (eContainingFeature.isMany()) {
-						compoundCommand.append(AddCommand.create(editingDomain, astRootElement, eContainingFeature, Collections.singletonList(copy)));
-					} else {
-						compoundCommand.append(SetCommand.create(editingDomain, astRootElement, eContainingFeature, copy));
-					}
+				EObject copyOfRootASTElement = EcoreUtil.copy(rootASTElement);
+				EStructuralFeature eContainingFeature = astRootElement.eContainingFeature();
+				
+				if (eContainingFeature.isMany()) {
+					compoundCommand.append(AddCommand.create(editingDomain, astRootElement.eContainer(), eContainingFeature, Collections.singletonList(copyOfRootASTElement)));
+				} else {
+					compoundCommand.append(SetCommand.create(editingDomain, astRootElement.eContainer(), eContainingFeature, copyOfRootASTElement));
 				}
 			}
 		}

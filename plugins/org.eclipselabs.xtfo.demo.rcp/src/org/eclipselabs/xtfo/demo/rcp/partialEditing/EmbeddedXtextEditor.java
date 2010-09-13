@@ -10,6 +10,7 @@
  *    Obeo - initial API and implementation
  *    itemis AG - source viewer configuration
  *    Sebastian Zarnekow (itemis AG) - synthetic resource creation and source viewer configuration 
+ *    Cedric Vidal (ProxiAD) - integration with global scope
  */
 package org.eclipselabs.xtfo.demo.rcp.partialEditing;
 
@@ -110,7 +111,7 @@ public class EmbeddedXtextEditor {
 	private int fStyle;
 	
 	private XtextSourceViewer fSourceViewer;
-	private XtextResource fResource;
+	private EmbeddedXtextResource fResource;
 	private XtextDocument fDocument;
 	
 	@Inject
@@ -138,6 +139,8 @@ public class EmbeddedXtextEditor {
 	private Provider<XtextDocument> fDocumentProvider;
 
 	@Inject
+	private Provider<EmbeddedXtextResource> fEmbeddedXtextResourceProvider;
+	@Inject
 	private IResourceValidator fResourceValidator;
 
 	@Inject
@@ -156,7 +159,8 @@ public class EmbeddedXtextEditor {
 	private IAnnotationAccess fAnnotationAccess;
 	
 	/**
-	 * Creates a new EmbeddedXtextEditor.
+	 * Creates a new EmbeddedXtextEditor. It must have the SWT.V_SCROLL style at least not to 
+	 * throw NPE when computing overview ruler.
 	 * 
 	 * @param control the parent composite that will contain the editor
 	 * @param injector the Guice injector to get Xtext configuration elements
@@ -217,12 +221,12 @@ public class EmbeddedXtextEditor {
 	 * 
 	 * @param document
 	 * @param prefix
-	 * @param editablePart
+	 * @param text
 	 * @param suffix
 	 */
-	protected void setText(XtextDocument document, String editablePart) {
-		document.set(editablePart);
-		fResource = createResource(editablePart);
+	protected void setText(XtextDocument document, String text) {
+		document.set(text);
+		fResource = createResource(text);
 		document.setInput(fResource);
 		AnnotationModel annotationModel = new AnnotationModel();
 		if (document instanceof ISynchronizable) {
@@ -236,8 +240,8 @@ public class EmbeddedXtextEditor {
 		fSourceViewer.setDocument(document, annotationModel);
 	}
 	
-	private XtextResource createResource(String content) {
-		XtextResource result = createResource();
+	private EmbeddedXtextResource createResource(String content) {
+		EmbeddedXtextResource result = createResource();
 		try {
 			result.load(new StringInputStream(content, result.getEncoding()), Collections.emptyMap());
 		} catch (Exception e) {
@@ -458,14 +462,14 @@ public class EmbeddedXtextEditor {
 	/**
 	 * Updates the text of this editor with the given String
 	 * 
-	 * @param model
+	 * @param text
 	 */
-	public void update(String model) {
+	public void update(String text) {
 		IDocument document = fSourceViewer.getDocument();
 		
 		fSourceViewer.setRedraw(false);
-		document.set(model);
-		fSourceViewer.setVisibleRegion(0, model.length());
+		document.set(text);
+		fSourceViewer.setVisibleRegion(0, text.length());
 		fSourceViewer.setRedraw(true);
 	}
 	
@@ -479,9 +483,16 @@ public class EmbeddedXtextEditor {
 	 * @param asString
 	 */
 	public void update(EObject eObject, String asString) {
+		fResource.setParentResource(eObject.eResource());
 		if (eObject != null) {
 			EObject asStringEObject = null;
-			XtextResource asStringResource = (XtextResource) fResourceSetProvider.get(null).createResource(URI.createURI("asStringResource." + fFileExtension));
+//			XtextResource asStringResource = (XtextResource) fResourceSetProvider.get(null).createResource(URI.createURI("asStringResource." + fFileExtension));
+			ResourceSet resourceSet = fResourceSetProvider.get(null);
+			EmbeddedXtextResource asStringResource = (EmbeddedXtextResource) fEmbeddedXtextResourceProvider.get();
+			resourceSet.getResources().add(asStringResource);
+//			EmbeddedXtextResource asStringResource = new EmbeddedXtextResource();
+			asStringResource.setURI(URI.createURI("asStringResource." + fFileExtension));
+			asStringResource.setParentResource(eObject.eResource());
 			try {
 				asStringResource.load(new StringInputStream(asString), Collections.emptyMap());
 				if (!asStringResource.getContents().isEmpty()) {
@@ -502,8 +513,12 @@ public class EmbeddedXtextEditor {
 				update(asString);
 			} else if (asStringEObject != null) {
 				try {
-					Resource copyResource = (XtextResource) fResourceSetProvider.get(null).createResource(URI.createURI("copyResource." + fFileExtension));
-					
+//					Resource copyResource = (XtextResource) fResourceSetProvider.get(null).createResource(URI.createURI("copyResource." + fFileExtension));
+//					EmbeddedXtextResource copyResource = (EmbeddedXtextResource) fResourceSetProvider.get(null).createResource(URI.createURI("copyResource." + fFileExtension));
+					EmbeddedXtextResource copyResource = (EmbeddedXtextResource) fEmbeddedXtextResourceProvider.get();
+//					EmbeddedXtextResource copyResource = new EmbeddedXtextResource();
+					copyResource.setURI(URI.createURI("copyResource." + fFileExtension));
+					copyResource.setParentResource(eObject.eResource());
 					try {
 						EObject copyEObject = EcoreUtil.copy(eObject);
 						copyResource.getContents().add(copyEObject);
@@ -520,7 +535,6 @@ public class EmbeddedXtextEditor {
 					}
 
 					copyResource.unload();
-					copyResource.getResourceSet().getResources().remove(copyResource);
 				} catch (Exception e) {
 					update(asString);
 				}
@@ -619,14 +633,17 @@ public class EmbeddedXtextEditor {
 			}			
 		}
 	}
-	
-	protected XtextResource createResource() {
+
+	protected EmbeddedXtextResource createResource() {
 		ResourceSet resourceSet = fResourceSetProvider.get(null);
-		XtextResource result = (XtextResource) resourceSet.createResource(
-				URI.createURI(fGrammarAccess.getGrammar().getName() + "." + fFileExtension));
+//		XtextResource result = (XtextResource) resourceSet.createResource(
+//				URI.createURI(fGrammarAccess.getGrammar().getName() + "." + fFileExtension));
+		EmbeddedXtextResource result = (EmbeddedXtextResource) fEmbeddedXtextResourceProvider.get();
+		result.setURI(URI.createURI(fGrammarAccess.getGrammar().getName() + "." + fFileExtension));
+		resourceSet.getResources().add(result);
 		return result;
 	}
-		
+
 	private static boolean equals(EObject expected, EObject actual) {
 		Map<String, Object> options = ImmutableMap.<String, Object> builder().put(MatchOptions.OPTION_IGNORE_XMI_ID, Boolean.TRUE).build();
 	    MatchModel match = null;
