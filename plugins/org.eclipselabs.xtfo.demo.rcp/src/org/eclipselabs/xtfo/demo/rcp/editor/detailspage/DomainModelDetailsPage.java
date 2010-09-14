@@ -188,6 +188,9 @@ public class DomainModelDetailsPage extends EObjectAbstractDetailsPage {
 				if (!editor.getViewer().getTextWidget().getText().equals(getEditedEObject().getAsString())) {
 					getEditor().setDirty(true);
 					getEditor().firePropertyChange(IEditorPart.PROP_DIRTY);
+				} else {
+					getEditor().setDirty(false);
+					getEditor().firePropertyChange(IEditorPart.PROP_DIRTY);
 				}
 			}
 		});
