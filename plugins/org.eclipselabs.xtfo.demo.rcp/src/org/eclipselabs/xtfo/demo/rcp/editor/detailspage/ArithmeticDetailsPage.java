@@ -122,7 +122,7 @@ public class ArithmeticDetailsPage extends EObjectAbstractDetailsPage {
 		
 		editorComposite.setLayout(new GridLayout());
 
-		editor = new EmbeddedXtextEditor(editorComposite, injector, SWT.BORDER | SWT.V_SCROLL);
+		editor = new EmbeddedXtextEditor(editorComposite, injector, SWT.BORDER);
 
 		editor.getViewer().getTextWidget().addModifyListener(new ModifyListener() {
 			public void modifyText(ModifyEvent e) {

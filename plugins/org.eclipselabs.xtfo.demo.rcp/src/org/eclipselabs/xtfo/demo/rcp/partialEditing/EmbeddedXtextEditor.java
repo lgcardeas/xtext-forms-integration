@@ -402,7 +402,7 @@ public class EmbeddedXtextEditor {
 	 * @return the overview ruler
 	 */
 	private IOverviewRuler getOverviewRuler() {
-		if (fOverviewRuler == null)
+		if (fOverviewRuler == null && (fStyle & SWT.V_SCROLL) != 0)
 			fOverviewRuler= createOverviewRuler(getSharedColors());
 		return fOverviewRuler;
 	}
