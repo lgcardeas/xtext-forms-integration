@@ -113,6 +113,7 @@ import org.eclipse.ui.views.properties.PropertySheetPage;
 import org.eclipse.xtext.example.arithmetics.arithmetics.provider.ArithmeticsItemProviderAdapterFactory;
 import org.eclipse.xtext.example.domainmodel.provider.DomainmodelItemProviderAdapterFactory;
 import org.eclipse.xtext.ui.editor.reconciler.XtextReconciler;
+import org.eclipse.xtext.ui.editor.validation.ValidationJob;
 import org.eclipselabs.xtfo.demo.metamodel.demo.provider.DemoItemProviderAdapterFactory;
 import org.eclipselabs.xtfo.demo.rcp.Activator;
 import org.eclipselabs.xtfo.demo.rcp.editor.pages.MasterDetailsPage;
@@ -557,7 +558,7 @@ public class RCPEditor extends FormEditor implements IEditingDomainProvider,
 	 * This is here for the listener to be able to call it.
 	 */
 	@Override
-	protected void firePropertyChange(int action) {
+	public void firePropertyChange(int action) {
 		super.firePropertyChange(action);
 	}
 
@@ -885,10 +886,15 @@ public class RCPEditor extends FormEditor implements IEditingDomainProvider,
 	 */
 	@Override
 	public boolean isDirty() {
-		return ((BasicCommandStack) editingDomain.getCommandStack())
+		return isDirty || ((BasicCommandStack) editingDomain.getCommandStack())
 				.isSaveNeeded();
 	}
-
+	
+	private boolean isDirty;
+	public void setDirty(boolean dirtyState) {
+		isDirty = dirtyState;
+	}
+	
 	/**
 	 * This is for implementing {@link IEditorPart} and simply saves the model
 	 * file.
@@ -896,7 +902,8 @@ public class RCPEditor extends FormEditor implements IEditingDomainProvider,
 	@Override
 	public void doSave(IProgressMonitor progressMonitor) {
 		try {
-			Job.getJobManager().join(XtextReconciler.class.getName(), new SubProgressMonitor(progressMonitor, 2));
+			Job.getJobManager().join(XtextReconciler.class.getName(), new SubProgressMonitor(new NullProgressMonitor(), 2));
+			Job.getJobManager().join(ValidationJob.XTEXT_VALIDATION_FAMILY, new SubProgressMonitor(new NullProgressMonitor(), 2));
 		} catch (OperationCanceledException e) {
 			
 		} catch (InterruptedException e) {
@@ -952,6 +959,7 @@ public class RCPEditor extends FormEditor implements IEditingDomainProvider,
 			// Refresh the necessary state.
 			//
 			((BasicCommandStack) editingDomain.getCommandStack()).saveIsDone();
+			isDirty = false;
 			firePropertyChange(IEditorPart.PROP_DIRTY);
 		} catch (Exception exception) {
 			// Something went wrong that shouldn't.

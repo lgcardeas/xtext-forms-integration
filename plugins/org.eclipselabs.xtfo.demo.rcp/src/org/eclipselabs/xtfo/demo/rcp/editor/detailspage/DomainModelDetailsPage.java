@@ -14,7 +14,6 @@ package org.eclipselabs.xtfo.demo.rcp.editor.detailspage;
 
 import java.util.Collection;
 import java.util.Collections;
-import java.util.Iterator;
 
 import org.eclipse.core.runtime.IProgressMonitor;
 import org.eclipse.core.runtime.IStatus;
@@ -39,6 +38,7 @@ import org.eclipse.swt.layout.GridLayout;
 import org.eclipse.swt.widgets.Composite;
 import org.eclipse.swt.widgets.Display;
 import org.eclipse.swt.widgets.Text;
+import org.eclipse.ui.IEditorPart;
 import org.eclipse.ui.forms.IManagedForm;
 import org.eclipse.ui.forms.widgets.FormToolkit;
 import org.eclipse.ui.forms.widgets.Section;
@@ -183,6 +183,14 @@ public class DomainModelDetailsPage extends EObjectAbstractDetailsPage {
 		
 		editor = new EmbeddedXtextEditor(editorComposite, injector);
 		
+		editor.getViewer().getTextWidget().addModifyListener(new ModifyListener() {
+			public void modifyText(ModifyEvent e) {
+				if (!editor.getViewer().getTextWidget().getText().equals(getEditedEObject().getAsString())) {
+					getEditor().setDirty(true);
+					getEditor().firePropertyChange(IEditorPart.PROP_DIRTY);
+				}
+			}
+		});
 		editor.getDocument().addModelListener(new IXtextModelListener() {
 			public void modelChanged(XtextResource resource) {
 				reconcileChangedModel();
