@@ -13,7 +13,6 @@ package org.eclipselabs.xtfo.demo.rcp.editor.detailspage;
 
 import java.util.Collection;
 import java.util.Collections;
-import java.util.Iterator;
 
 import org.eclipse.emf.common.command.CompoundCommand;
 import org.eclipse.emf.ecore.EObject;
@@ -27,6 +26,8 @@ import org.eclipse.swt.SWT;
 import org.eclipse.swt.custom.VerifyKeyListener;
 import org.eclipse.swt.events.FocusEvent;
 import org.eclipse.swt.events.FocusListener;
+import org.eclipse.swt.events.ModifyEvent;
+import org.eclipse.swt.events.ModifyListener;
 import org.eclipse.swt.events.VerifyEvent;
 import org.eclipse.swt.graphics.FontMetrics;
 import org.eclipse.swt.graphics.GC;
@@ -34,6 +35,7 @@ import org.eclipse.swt.layout.GridData;
 import org.eclipse.swt.layout.GridLayout;
 import org.eclipse.swt.widgets.Composite;
 import org.eclipse.swt.widgets.Display;
+import org.eclipse.ui.IEditorPart;
 import org.eclipse.ui.forms.IManagedForm;
 import org.eclipse.ui.forms.widgets.FormToolkit;
 import org.eclipse.ui.forms.widgets.Section;
@@ -122,6 +124,17 @@ public class ArithmeticDetailsPage extends EObjectAbstractDetailsPage {
 
 		editor = new EmbeddedXtextEditor(editorComposite, injector, SWT.BORDER | SWT.V_SCROLL);
 
+		editor.getViewer().getTextWidget().addModifyListener(new ModifyListener() {
+			public void modifyText(ModifyEvent e) {
+				if (!editor.getViewer().getTextWidget().getText().equals(getEditedEObject().getAsString())) {
+					getEditor().setDirty(true);
+					getEditor().firePropertyChange(IEditorPart.PROP_DIRTY);
+				} else {
+					getEditor().setDirty(false);
+					getEditor().firePropertyChange(IEditorPart.PROP_DIRTY);
+				}
+			}
+		});
 		editor.getDocument().addModelListener(new IXtextModelListener() {
 			public void modelChanged(XtextResource resource) {
 				reconcileChangedModel();
@@ -171,7 +184,7 @@ public class ArithmeticDetailsPage extends EObjectAbstractDetailsPage {
 	    return ret;
 	}
 
-	private boolean isDocumentHasErrors(final IXtextDocument xtextDocument) {
+	private boolean documentHasErrors(final IXtextDocument xtextDocument) {
 		return (xtextDocument.readOnly(new IUnitOfWork<Boolean, XtextResource>() {
 			public Boolean exec(XtextResource state) throws Exception {
 				IParseResult parseResult = state.getParseResult();
@@ -205,7 +218,7 @@ public class ArithmeticDetailsPage extends EObjectAbstractDetailsPage {
 		}
 		
 		if (editor.getDocument() != null) { 
-			if (isDocumentHasErrors(editor.getDocument())) {
+			if (documentHasErrors(editor.getDocument())) {
 				// Parsing error, we don't do aything
 				updateEditedEObject = false;
 			}
