@@ -69,6 +69,7 @@ import org.eclipse.swt.widgets.Composite;
 import org.eclipse.swt.widgets.Control;
 import org.eclipse.swt.widgets.Menu;
 import org.eclipse.ui.ActiveShellExpression;
+import org.eclipse.ui.IEditorPart;
 import org.eclipse.ui.PlatformUI;
 import org.eclipse.ui.contexts.IContextActivation;
 import org.eclipse.ui.contexts.IContextService;
@@ -691,14 +692,22 @@ public class EmbeddedXtextEditor {
 		}
 		
 		public void focusLost(FocusEvent e) {
-			IContextService contextService = (IContextService) PlatformUI.getWorkbench().
+			if (fContextActivation != null) {
+
+				IEditorPart activeEditor = PlatformUI.getWorkbench().
 					getActiveWorkbenchWindow().
 					getActivePage().
-					getActiveEditor().
-					getSite().
-					getService(IContextService.class);
-			contextService.deactivateContext(fContextActivation);
-			
+					getActiveEditor();
+
+				if (activeEditor != null) {
+					IContextService contextService = (IContextService) activeEditor.
+						getSite().
+						getService(IContextService.class);
+
+					contextService.deactivateContext(fContextActivation);
+				}
+			}
+
 			IHandlerService handlerService = (IHandlerService) PlatformUI.getWorkbench().getAdapter(IHandlerService.class);
 			handlerService.deactivateHandlers(fHandlerActivations);
 		}
